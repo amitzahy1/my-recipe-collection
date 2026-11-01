@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {readFileSync,readdirSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
@@ -69,23 +69,36 @@ test('basic review is explicitly rules-based and points out missing structure',(
  const review=basicReview(normalizeRecipe({title:'עוגה',steps:['אופים בתנור']}));assert.equal(review.type,'basic');assert.ok(review.issues.some(x=>x.title.includes('טמפרטורת')));assert.ok(review.issues.some(x=>x.title.includes('מצרכים')));assert.match(review.limitations,/לא ניתוח AI/);
 });
 class D1Fixture{
- constructor(){this.db=NativeDatabaseSync?new NativeDatabaseSync(':memory:'):new PythonSqliteSync();const sql=readFileSync(new URL('../drizzle/0000_bouncy_king_cobra.sql',import.meta.url),'utf8');this.db.exec(sql);}
+ constructor(){this.db=NativeDatabaseSync?new NativeDatabaseSync(':memory:'):new PythonSqliteSync();const dir=new URL('../drizzle/',import.meta.url);for(const f of readdirSync(dir).filter(f=>f.endsWith('.sql')).sort())this.db.exec(readFileSync(new URL(f,dir),'utf8'));}
  prepare(sql){const db=this.db;return {bind(...params){return {async all(){return {results:db.prepare(sql).all(...params)};},async first(){return db.prepare(sql).get(...params)||null;},async run(){return {meta:db.prepare(sql).run(...params)};}};}};}
  async batch(stmts){this.db.exec('BEGIN');try{const results=[];for(const s of stmts)results.push(await s.run());this.db.exec('COMMIT');return results;}catch(err){this.db.exec('ROLLBACK');throw err;}}
 }
-function request(path,body,user='owner'){return new Request('https://app.example/api/'+path,{method:body?'POST':'GET',headers:{...(user?{'oai-authenticated-user-id':user}:{}),...(body?{Origin:'https://app.example','Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});}
-test('shared collections, following, ratings and ownership are persisted with private notes removed',async()=>{
- const env={DB:new D1Fixture()};const recipe=normalizeRecipe({id:'recipe-1',title:'מרק',notes:'PRIVATE NOTE',raw:'PRIVATE RAW',ingredients:['מים'],steps:['מבשלים'],servings:2,rating:5});
- const published=await handleAPI(request('collections',{id:'collection-1',title:'משפחתי',ownerName:'עמית',recipes:[recipe]}),env);assert.equal(published.status,200);const p=await published.json();assert.equal(p.count,1);
- const viewed=await (await handleAPI(request('collections/'+p.token,undefined,'friend'),env)).json();assert.equal(viewed.recipes[0].notes,'');assert.equal(viewed.recipes[0].raw,'');assert.equal(viewed.recipes[0].rating,0);
- assert.equal((await handleAPI(request('collections',{id:'collection-1',title:'hijack',recipes:[recipe]},'friend'),env)).status,403);
- assert.equal((await handleAPI(request('subscribe',{token:p.token},'friend'),env)).status,200);const lists=await (await handleAPI(request('collections',undefined,'friend'),env)).json();assert.equal(lists.following.length,1);
- const rated=await (await handleAPI(request('ratings',{token:p.token,recipeId:'recipe-1',score:4},'friend'),env)).json();assert.equal(rated.average,4);assert.equal(rated.count,1);
- await handleAPI(request('ratings',{token:p.token,recipeId:'recipe-1',score:5},'friend'),env);const updated=await (await handleAPI(request('collections/'+p.token,undefined,'friend'),env)).json();assert.equal(updated.recipes[0].communityRating.average,5);assert.equal(updated.recipes[0].communityRating.count,1);
- assert.equal((await handleAPI(request('collections',undefined,null),env)).status,401);
- const foreign=new Request('https://app.example/api/subscribe',{method:'POST',headers:{Origin:'https://evil.example','oai-authenticated-user-id':'friend'},body:'{}'});assert.equal((await handleAPI(foreign,env)).status,403);
+function request(path,body,{clientId,cookie}={}){return new Request('https://app.example/api/'+path,{method:body?'POST':'GET',headers:{...(cookie?{Cookie:cookie}:{}),...(clientId?{'x-client-id':clientId}:{}),...(body?{Origin:'https://app.example','Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});}
+async function ownerCookie(env){const res=await handleAPI(request('login',{passcode:'pw-test'}),env);assert.equal(res.status,200);return res.headers.get('set-cookie').split(';')[0];}
+test('owner login gates publishing, shared collections are publicly readable and private notes are removed',async()=>{
+ const env={DB:new D1Fixture(),OWNER_PASSCODE:'pw-test',SESSION_SECRET:'secret-test'};const owner=await ownerCookie(env);
+ assert.equal((await handleAPI(request('login',{passcode:'wrong'}),env)).status,401);
+ const recipe=normalizeRecipe({id:'recipe-1',title:'מרק',notes:'PRIVATE NOTE',raw:'PRIVATE RAW',ingredients:['מים'],steps:['מבשלים'],servings:2,rating:5});
+ assert.equal((await handleAPI(request('collections',{id:'collection-1',title:'משפחתי',ownerName:'עמית',recipes:[recipe]},{clientId:'friend-123456'}),env)).status,401);
+ const published=await handleAPI(request('collections',{id:'collection-1',title:'משפחתי',ownerName:'עמית',recipes:[recipe]},{cookie:owner}),env);assert.equal(published.status,200);const p=await published.json();assert.equal(p.count,1);
+ const viewed=await (await handleAPI(request('collections/'+p.token,undefined,{clientId:'friend-123456'}),env)).json();assert.equal(viewed.recipes[0].notes,'');assert.equal(viewed.recipes[0].raw,'');assert.equal(viewed.recipes[0].rating,0);assert.equal(viewed.isOwner,false);
+ const ownerView=await (await handleAPI(request('collections/'+p.token,undefined,{cookie:owner}),env)).json();assert.equal(ownerView.isOwner,true);
+ const publicView=await handleAPI(request('collections/'+p.token),env);assert.equal(publicView.status,200);
+ assert.equal((await handleAPI(request('subscribe',{token:p.token},{clientId:'friend-123456'}),env)).status,200);const lists=await (await handleAPI(request('collections',undefined,{clientId:'friend-123456'}),env)).json();assert.equal(lists.following.length,1);assert.equal(lists.own.length,0);
+ const rated=await (await handleAPI(request('ratings',{token:p.token,recipeId:'recipe-1',score:4},{clientId:'friend-123456'}),env)).json();assert.equal(rated.average,4);assert.equal(rated.count,1);
+ await handleAPI(request('ratings',{token:p.token,recipeId:'recipe-1',score:5},{clientId:'friend-123456'}),env);const updated=await (await handleAPI(request('collections/'+p.token,undefined,{clientId:'friend-123456'}),env)).json();assert.equal(updated.recipes[0].communityRating.average,5);assert.equal(updated.recipes[0].communityRating.count,1);
+ assert.equal((await handleAPI(request('ratings',{token:p.token,recipeId:'recipe-1',score:3}),env)).status,401);
+ const anonLists=await (await handleAPI(request('collections'),env)).json();assert.deepEqual(anonLists,{own:[],following:[]});
+ assert.equal((await handleAPI(request('import/url',{url:'https://recipes.example/x'}),env)).status,401);
+ const foreign=new Request('https://app.example/api/subscribe',{method:'POST',headers:{Origin:'https://evil.example','x-client-id':'friend-123456','Content-Type':'application/json'},body:'{}'});assert.equal((await handleAPI(foreign,env)).status,403);
 });
+test('owner login locks out after repeated failures',async()=>{
+ const env={DB:new D1Fixture(),OWNER_PASSCODE:'pw-test',SESSION_SECRET:'secret-test'};
+ for(let i=0;i<4;i++)assert.equal((await handleAPI(request('login',{passcode:'wrong'}),env)).status,401);
+ assert.equal((await handleAPI(request('login',{passcode:'wrong'}),env)).status,429);
+ assert.equal((await handleAPI(request('login',{passcode:'pw-test'}),env)).status,429);
+},15000);
 test('URL import rejects local addresses and AI stays deferred',async()=>{
  for(const url of ['http://example.com','https://127.0.0.1','https://localhost','https://metadata.internal','https://[::1]','https://user:password@example.com'])assert.throws(()=>publicURL(url));
- assert.equal(publicURL('https://recipes.example/page').hostname,'recipes.example');const cap=await (await handleAPI(request('capabilities'),{})).json();assert.equal(cap.ai,false);
+ assert.equal(publicURL('https://recipes.example/page').hostname,'recipes.example');const cap=await (await handleAPI(request('capabilities',{}),{})).json();assert.equal(cap.ai,false);assert.equal(cap.authenticated,false);
 });

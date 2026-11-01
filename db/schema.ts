@@ -11,3 +11,6 @@ export const subscriptions=sqliteTable('subscriptions',{
 export const ratings=sqliteTable('recipe_ratings',{
  userId:text('user_id').notNull(),ownerId:text('owner_id').notNull(),recipeId:text('recipe_id').notNull(),score:integer('score').notNull(),updatedAt:integer('updated_at').notNull(),
 },t=>[primaryKey({columns:[t.userId,t.ownerId,t.recipeId]})]);
+export const loginThrottle=sqliteTable('login_throttle',{
+ ip:text('ip').primaryKey(),fails:integer('fails').notNull(),firstFail:integer('first_fail').notNull(),lockedUntil:integer('locked_until').notNull(),
+});
