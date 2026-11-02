@@ -82,7 +82,7 @@ function openDetail(id,servings){
  detailServings=servings||baseServings;
  const scaleFactor=detailServings/baseServings;
  const isScaled=Math.abs(scaleFactor-1)>0.01;
- const scaleBadge=isScaled?`<span class="scale-badge">×${Number(scaleFactor.toFixed(2))} מהמקור (${baseServings} סועדים)</span>`:`<span class="scale-badge subtle">כמות מקורית (${baseServings} סועדים)</span>`;
+ const scaleBadge=isScaled?`<span class="scale-badge">×${Number(scaleFactor.toFixed(2))} מכמות הבסיס (${baseServings} סועדים)</span>`:`<span class="scale-badge subtle">כמות בסיס (${baseServings} סועדים)</span>`;
  showModal(`
   <div class="detail-sheet">
    <div class="detail-hero-v2">
