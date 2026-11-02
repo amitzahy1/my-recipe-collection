@@ -1,4 +1,4 @@
-const CACHE='matkon-v2.1.0';
+const CACHE='matkon-v2.2.0';
 const BASE=new URL('./',self.location.href).pathname;
 const SHELL=['./','./index.html','./style.css','./app.js','./core.js','./intelligence.js','./demo.js','./keep-recipes.js','./manifest.webmanifest','./assets/icon.svg','./assets/icon-192.png','./assets/icon-512.png','./assets/jszip.min.js','./assets/heebo.css','./assets/heebo-0.ttf','./assets/heebo-1.ttf','./assets/heebo-2.ttf','./assets/heebo-3.ttf','./assets/heebo-4.ttf','./assets/frank.css','./assets/frank-0.ttf','./assets/frank-1.ttf','./assets/frank-2.ttf','./assets/focaccia.jpg','./assets/chicken.jpg','./assets/ramen.jpg','./assets/beef.jpg','./assets/salad.jpg','./assets/cake.jpg'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));});
